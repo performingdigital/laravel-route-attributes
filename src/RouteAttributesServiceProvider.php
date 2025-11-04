@@ -32,25 +32,18 @@ class RouteAttributesServiceProvider extends ServiceProvider
         $routeRegistrar = $this->app->make(RouteRegistrar::class, [app()->router])
             ->useMiddleware(config('route-attributes.middleware') ?? []);
 
-        collect($this->getRouteDirectories())->each(function (string|array $directory, string|int $namespace) use ($routeRegistrar) {
-            if (is_array($directory)) {
-                $options = Arr::except($directory, ['namespace', 'base_path', 'patterns', 'not_patterns']);
+        collect($this->getRouteDirectories())->each(function (array $config) use ($routeRegistrar) {
+            $options = Arr::except($config, ['directory', 'namespace', 'base_path', 'patterns', 'not_patterns', 'use_pathname']);
 
-                $routeRegistrar
-                    ->useRootNamespace($directory['namespace'] ?? app()->getNamespace())
-                    ->useBasePath($directory['base_path'] ?? (isset($directory['namespace']) ? $namespace : app()->path()))
-                    ->group($options, fn () => $routeRegistrar->registerDirectory($namespace, $directory['patterns'] ?? [], $directory['not_patterns'] ?? []));
-            } else {
-                is_string($namespace)
-                    ? $routeRegistrar
-                        ->useRootNamespace($namespace)
-                        ->useBasePath($directory)
-                        ->registerDirectory($directory)
-                    : $routeRegistrar
-                        ->useRootNamespace(app()->getNamespace())
-                        ->useBasePath(app()->path())
-                        ->registerDirectory($directory);
-            }
+            $routeRegistrar
+                ->useRootNamespace($config['namespace'] ?? app()->getNamespace())
+                ->useBasePath($config['base_path'] ?? (isset($config['namespace']) ? $config['directory'] : app()->path()))
+                ->group($options, fn () => $routeRegistrar->registerDirectory(
+                    directories: $config['directory'] ?? app()->path(),
+                    patterns: $config['patterns'] ?? [],
+                    notPatterns: $config['not_patterns'] ?? [],
+                    usePathname: $config['use_pathname'] ?? false,
+                ));
         });
     }
 

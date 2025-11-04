@@ -68,12 +68,39 @@ class RouteRegistrar
         return $this->middleware ?? [];
     }
 
-    public function registerDirectory(string | array $directories, array $patterns = [], array $notPatterns = []): void
+    public function registerDirectory(string | array $directories, array $patterns = [], array $notPatterns = [], bool $usePathname = false): void
     {
         $directories = Arr::wrap($directories);
         $patterns = $patterns ?: ['*.php'];
 
-        $files = (new Finder())->files()->in($directories)->name($patterns)->notName($notPatterns)->sortByName();
+        $files = new Finder()->files()->in($directories);
+
+        if ($usePathname) {
+            $files = $files->filter(function (\SplFileInfo $file) use ($patterns, $notPatterns) {
+                if (! $file->isReadable() || $file->getExtension() !== 'php') {
+                    return false;
+                }
+
+                $pathName = $file->getRelativePathname();
+                foreach ($notPatterns as $pattern) {
+                    if (preg_match($pattern, $pathName) === 1) {
+                        return false;
+                    }
+                }
+
+                foreach ($patterns as $pattern) {
+                    if (preg_match($pattern, $pathName) === 1) {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+        } else {
+            $files = $files->name($patterns)->notName($notPatterns);
+        }
+
+        $files = $files->sortByName();
 
         // Collect all groups from all files first
         $allGroups = collect();

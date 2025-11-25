@@ -7,23 +7,10 @@ use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Arr;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Spatie\RouteAttributes\RouteRegistrar;
-use Spatie\RouteAttributes\Tests\TestClasses\Middleware\AnotherTestMiddleware;
 
 class TestCase extends Orchestra
 {
     protected RouteRegistrar $routeRegistrar;
-
-    public function setUp(): void
-    {
-        parent::setUp();
-
-        $router = app()->router;
-
-        $this->routeRegistrar = (new RouteRegistrar($router))
-            ->useBasePath($this->getTestPath())
-            ->useMiddleware([AnotherTestMiddleware::class])
-            ->useRootNamespace('Spatie\RouteAttributes\Tests\\');
-    }
 
     protected function defineEnvironment($app)
     {
@@ -35,33 +22,33 @@ class TestCase extends Orchestra
 
     public function getTestPath(?string $directory = null): string
     {
-        return __DIR__ . ($directory ? DIRECTORY_SEPARATOR . $directory : '');
+        return __DIR__.($directory ? DIRECTORY_SEPARATOR.$directory : '');
     }
 
-    public function assertRegisteredRoutesCount(int $expectedNumber): self
+    public function expectRegisteredRoutesCount(int $expectedNumber): self
     {
         $actualNumber = $this->getRouteCollection()->count();
 
-        $this->assertEquals($expectedNumber, $actualNumber);
+        expect($actualNumber)->toBe($expectedNumber);
 
         return $this;
     }
 
-    public function assertRouteRegistered(
-        string       $controller,
-        string       $controllerMethod = 'myMethod',
+    public function expectRouteRegistered(
+        string $controller,
+        string $controllerMethod = 'myMethod',
         string|array $httpMethods = ['get'],
-        string       $uri = 'my-method',
+        string $uri = 'my-method',
         string|array $middleware = [],
         string|array $withoutMiddleware = [],
-        ?string      $name = null,
-        ?string      $domain = null,
-        ?array       $wheres = [],
-        ?bool        $isFallback = false,
-        ?bool        $enforcesScopedBindings = false,
-        ?bool        $preventsScopedBindings = false,
-        ?array       $defaults = [],
-        ?bool        $withTrashed = false,
+        ?string $name = null,
+        ?string $domain = null,
+        ?array $wheres = [],
+        ?bool $isFallback = false,
+        ?bool $enforcesScopedBindings = false,
+        ?bool $preventsScopedBindings = false,
+        ?array $defaults = [],
+        ?bool $withTrashed = false,
     ): self {
         if (! is_array($middleware)) {
             $middleware = Arr::wrap($middleware);
@@ -136,7 +123,7 @@ class TestCase extends Orchestra
                 return true;
             });
 
-        $this->assertTrue($routeRegistered, 'The expected route was not registered');
+        expect($routeRegistered)->toBeTrue('The expected route was not registered');
 
         return $this;
     }

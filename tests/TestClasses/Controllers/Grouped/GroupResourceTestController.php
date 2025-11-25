@@ -1,12 +1,12 @@
 <?php
 
-namespace Spatie\RouteAttributes\Tests\TestClasses\Controllers\Resource;
+namespace Spatie\RouteAttributes\Tests\TestClasses\Controllers\Grouped;
 
 use Illuminate\Http\Request;
 use Spatie\RouteAttributes\Attributes\ApiResource;
 
 #[ApiResource('posts')]
-class ApiResource2TestController
+class GroupResourceTestController
 {
     public function index() {}
 

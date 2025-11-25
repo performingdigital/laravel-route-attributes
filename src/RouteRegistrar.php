@@ -4,6 +4,7 @@ namespace Spatie\RouteAttributes;
 
 use Illuminate\Routing\Router;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use ReflectionAttribute;
 use ReflectionClass;
@@ -51,12 +52,12 @@ class RouteRegistrar
 
     public function useRootNamespace(string $rootNamespace): self
     {
-        $this->rootNamespace = rtrim(str_replace('/', '\\', $rootNamespace), '\\') . '\\';
+        $this->rootNamespace = rtrim(str_replace('/', '\\', $rootNamespace), '\\').'\\';
 
         return $this;
     }
 
-    public function useMiddleware(string | array $middleware): self
+    public function useMiddleware(string|array $middleware): self
     {
         $this->middleware = Arr::wrap($middleware);
 
@@ -102,42 +103,49 @@ class RouteRegistrar
 
         $files = $files->sortByName();
 
-        // Collect all groups from all files first
-        $allGroups = collect();
-
-        foreach ($files as $file) {
-            $className = $this->fullQualifiedClassNameFromFile($file);
-
-            if (! class_exists($className)) {
-                continue;
-            }
-
-            $class = new ReflectionClass($className);
-            $classRouteAttributes = new ClassRouteAttributes($class);
-            $groups = $classRouteAttributes->groups();
-
-            foreach ($groups as $group) {
-                $allGroups->push([
-                    'class' => $class,
-                    'classRouteAttributes' => $classRouteAttributes,
-                    'group' => $group,
-                ]);
-            }
-        }
-
-        // Sort all groups globally - domain groups first, then non-domain groups
-        $sortedGroups = $allGroups->sortByDesc(function ($item) {
-            return !empty($item['group']['domain'] ?? null);
-        });
-
-        // Process all groups in the correct order
-        foreach ($sortedGroups as $item) {
-            $router = $this->router;
-            $router->group($item['group'], fn () => $this->registerRoutes($item['class'], $item['classRouteAttributes']));
-        }
+        $this
+            ->collectGroupsFromFiles($files)
+            ->sortByDesc(fn ($item) => ! empty($item['group']['domain'] ?? null))
+            ->each(fn ($item) => $this->registerGroupedRoutes($item));
     }
 
-    public function registerFile(string | SplFileInfo $path): void
+    protected function collectGroupsFromFiles(Finder $files): Collection
+    {
+        return collect($files)
+            ->map(fn ($file) => $this->fullQualifiedClassNameFromFile($file))
+            ->filter(fn ($className) => class_exists($className))
+            ->map(fn ($className) => [
+                'class' => new ReflectionClass($className),
+                'classRouteAttributes' => new ClassRouteAttributes(new ReflectionClass($className)),
+            ])
+            ->flatMap(fn ($item) => $this->expandClassIntoGroups($item));
+    }
+
+    protected function expandClassIntoGroups(array $classData): array
+    {
+        return collect($classData['classRouteAttributes']->groups())
+            ->map(fn ($group) => [
+                'class' => $classData['class'],
+                'classRouteAttributes' => $classData['classRouteAttributes'],
+                'group' => $group,
+            ])
+            ->all();
+    }
+
+    protected function registerGroupedRoutes(array $item): void
+    {
+        $this->router->group(
+            $item['group'],
+            function () use ($item) {
+                $this->registerRoutes($item['class'], $item['classRouteAttributes']);
+                if ($item['classRouteAttributes']->resource()) {
+                    $this->registerResource($item['class'], $item['classRouteAttributes']);
+                }
+            }
+        );
+    }
+
+    public function registerFile(string|SplFileInfo $path): void
     {
         if (is_string($path)) {
             $path = new SplFileInfo($path);
@@ -163,7 +171,7 @@ class RouteRegistrar
             ucfirst(Str::replaceLast('.php', '', $class))
         );
 
-        return $this->rootNamespace . $class;
+        return $this->rootNamespace.$class;
     }
 
     protected function processAttributes(string $className): void
@@ -181,8 +189,8 @@ class RouteRegistrar
         // Note: When called from registerDirectory, groups are already globally sorted
         // This sorting is only for individual registerClass calls
         usort($groups, function (array $group1, array $group2) {
-            $domain1 = !empty($group1['domain'] ?? null);
-            $domain2 = !empty($group2['domain'] ?? null);
+            $domain1 = ! empty($group1['domain'] ?? null);
+            $domain2 = ! empty($group2['domain'] ?? null);
 
             return $domain2 <=> $domain1; // Domain routes come first
         });
@@ -195,7 +203,6 @@ class RouteRegistrar
         if ($classRouteAttributes->resource()) {
             $this->registerResource($class, $classRouteAttributes);
         }
-
 
     }
 
@@ -210,8 +217,7 @@ class RouteRegistrar
     protected function registerRoutes(ReflectionClass $class, ClassRouteAttributes $classRouteAttributes): void
     {
         foreach ($class->getMethods() as $method) {
-            list($attributes, $wheresAttributes, $defaultAttributes, $fallbackAttributes, $scopeBindingsAttribute, $withTrashedAttribute) = $this->getAttributesForTheMethod($method);
-
+            [$attributes, $wheresAttributes, $defaultAttributes, $fallbackAttributes, $scopeBindingsAttribute, $withTrashedAttribute] = $this->getAttributesForTheMethod($method);
 
             foreach ($attributes as $attribute) {
                 try {
@@ -224,29 +230,21 @@ class RouteRegistrar
                     continue;
                 }
 
-
-                list($httpMethods, $action) = $this->getHTTPMethodsAndAction($attributeClass, $method, $class);
-
+                [$httpMethods, $action] = $this->getHTTPMethodsAndAction($attributeClass, $method, $class);
 
                 $route = $this->router->addRoute($httpMethods, $attributeClass->uri, $action)->name($attributeClass->name);
 
-
                 $this->setScopeBindingsIfAvailable($scopeBindingsAttribute, $route, $classRouteAttributes);
-
 
                 $this->setWheresIfAvailable($classRouteAttributes, $wheresAttributes, $route);
 
-
                 $this->setDefaultsIfAvailable($classRouteAttributes, $defaultAttributes, $route);
-
 
                 $this->addMiddlewareToRoute($classRouteAttributes, $attributeClass, $route);
 
                 $this->addWithoutMiddlewareToRoute($classRouteAttributes, $attributeClass, $route);
 
-
                 $this->setWithTrashedIfAvailable($classRouteAttributes, $withTrashedAttribute, $route);
-
 
                 if (count($fallbackAttributes) > 0) {
                     $route->fallback();
@@ -255,12 +253,6 @@ class RouteRegistrar
         }
     }
 
-    /**
-     * @param ReflectionAttribute|null $scopeBindingsAttribute
-     * @param \Illuminate\Routing\Route $route
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @return void
-     */
     public function setScopeBindingsIfAvailable(?ReflectionAttribute $scopeBindingsAttribute, \Illuminate\Routing\Route $route, ClassRouteAttributes $classRouteAttributes): void
     {
         $scopeBindings = $scopeBindingsAttribute
@@ -274,10 +266,6 @@ class RouteRegistrar
         };
     }
 
-    /**
-     * @param \ReflectionMethod $method
-     * @return array
-     */
     public function getAttributesForTheMethod(\ReflectionMethod $method): array
     {
         $attributes = $method->getAttributes(RouteAttribute::class, ReflectionAttribute::IS_INSTANCEOF);
@@ -290,12 +278,6 @@ class RouteRegistrar
         return [$attributes, $wheresAttributes, $defaultAttributes, $fallbackAttributes, $scopeBindingsAttribute, $withTrashedAttribute];
     }
 
-    /**
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @param mixed $wheresAttributes
-     * @param \Illuminate\Routing\Route $route
-     * @return void
-     */
     public function setWheresIfAvailable(ClassRouteAttributes $classRouteAttributes, mixed $wheresAttributes, \Illuminate\Routing\Route $route): void
     {
         $wheres = $classRouteAttributes->wheres();
@@ -308,12 +290,6 @@ class RouteRegistrar
         }
     }
 
-    /**
-     * @param Route $attributeClass
-     * @param \ReflectionMethod $method
-     * @param ReflectionClass $class
-     * @return array
-     */
     public function getHTTPMethodsAndAction(Route $attributeClass, \ReflectionMethod $method, ReflectionClass $class): array
     {
         $httpMethods = $attributeClass->methods;
@@ -322,12 +298,6 @@ class RouteRegistrar
         return [$httpMethods, $action];
     }
 
-    /**
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @param Route $attributeClass
-     * @param \Illuminate\Routing\Route $route
-     * @return void
-     */
     public function addMiddlewareToRoute(ClassRouteAttributes $classRouteAttributes, Route $attributeClass, \Illuminate\Routing\Route $route): void
     {
         $classMiddleware = $classRouteAttributes->middleware();
@@ -335,24 +305,12 @@ class RouteRegistrar
         $route->middleware([...$this->middleware, ...$classMiddleware, ...$methodMiddleware]);
     }
 
-    /**
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @param Route $attributeClass
-     * @param \Illuminate\Routing\Route $route
-     * @return void
-     */
     private function addWithoutMiddlewareToRoute(ClassRouteAttributes $classRouteAttributes, Route $attributeClass, \Illuminate\Routing\Route $route): void
     {
         $methodWithoutMiddleware = $attributeClass->withoutMiddleware;
         $route->withoutMiddleware($methodWithoutMiddleware);
     }
 
-    /**
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @param mixed $defaultAttributes
-     * @param \Illuminate\Routing\Route $route
-     * @return void
-     */
     public function setDefaultsIfAvailable(ClassRouteAttributes $classRouteAttributes, mixed $defaultAttributes, \Illuminate\Routing\Route $route): void
     {
         $defaults = $classRouteAttributes->defaults();
@@ -366,16 +324,9 @@ class RouteRegistrar
         }
     }
 
-    /**
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @param ReflectionAttribute|null $withTrashedAttribute
-     * @param \Illuminate\Routing\Route $route
-     * @return void
-     */
     public function setWithTrashedIfAvailable(ClassRouteAttributes $classRouteAttributes, ?ReflectionAttribute $withTrashedAttribute, \Illuminate\Routing\Route $route): void
     {
         $withTrashed = $classRouteAttributes->withTrashed();
-
 
         if ($withTrashedAttribute !== null) {
             /** @var WithTrashed $instance */
@@ -386,11 +337,6 @@ class RouteRegistrar
         }
     }
 
-    /**
-     * @param ReflectionClass $class
-     * @param ClassRouteAttributes $classRouteAttributes
-     * @return \Closure
-     */
     public function getRoutes(ReflectionClass $class, ClassRouteAttributes $classRouteAttributes): \Closure
     {
         return function () use ($class, $classRouteAttributes) {
